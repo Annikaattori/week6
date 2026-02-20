@@ -11,7 +11,9 @@ This repository contains:
 
 ## Dataset
 
-Place the CSV file at repository root as:
+Place your CSV file at repository root. The app and script now default to the newest `.csv` file in the repo root.
+
+Default fallback filename is:
 
 - `work_from_home_burnout_dataset.csv`
 
@@ -29,7 +31,7 @@ pip install -r requirements.txt
 ## Run analysis script
 
 ```bash
-python analysis_week6.py --csv work_from_home_burnout_dataset.csv --output outputs
+python analysis_week6.py --output outputs
 ```
 
 Outputs are saved under `outputs/`, including:
@@ -45,6 +47,8 @@ Outputs are saved under `outputs/`, including:
 
 ```bash
 streamlit run app.py --server.port 8501 --server.address 0.0.0.0
+
+By default, the sidebar CSV path is prefilled with the newest `.csv` file found in the repo root.
 ```
 
 App supports:
