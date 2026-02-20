@@ -38,6 +38,12 @@ CLUSTER_RECOMMENDED = [
 ]
 
 
+def default_csv_path() -> str:
+    repo_root = Path(__file__).resolve().parent
+    csv_files = sorted(repo_root.glob("*.csv"), key=lambda p: p.stat().st_mtime, reverse=True)
+    return csv_files[0].name if csv_files else "work_from_home_burnout_dataset.csv"
+
+
 @st.cache_data
 def load_data(path: str) -> pd.DataFrame:
     csv_path = Path(path)
@@ -144,7 +150,7 @@ st.title("Week 6: Unsupervised Learning (Factor Analysis + Clustering)")
 
 with st.sidebar:
     page = st.radio("Navigation", ["Data & EDA", "Factor Analysis", "Clustering", "Documentation / Learning"])
-    dataset_path = st.text_input("CSV path", value="work_from_home_burnout_dataset.csv")
+    dataset_path = st.text_input("CSV path", value=default_csv_path())
     include_day_type = st.checkbox("Include day_type as one-hot in modeling", value=False)
 
 raw, clean, fa_df, cluster_df = ensure_data(dataset_path, include_day_type)

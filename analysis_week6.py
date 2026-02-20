@@ -38,6 +38,12 @@ CLUSTER_RECOMMENDED = [
 ]
 
 
+def default_csv_path() -> str:
+    repo_root = Path(__file__).resolve().parent
+    csv_files = sorted(repo_root.glob("*.csv"), key=lambda p: p.stat().st_mtime, reverse=True)
+    return str(csv_files[0].name) if csv_files else "work_from_home_burnout_dataset.csv"
+
+
 def load_data(csv_path: Path) -> pd.DataFrame:
     if not csv_path.exists():
         raise FileNotFoundError(
@@ -319,7 +325,7 @@ Limitations include correlated features, binary variables in latent models, and 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Week 6 FA + clustering analysis")
-    parser.add_argument("--csv", default="work_from_home_burnout_dataset.csv", help="Path to CSV dataset")
+    parser.add_argument("--csv", default=default_csv_path(), help="Path to CSV dataset")
     parser.add_argument("--output", default="outputs", help="Output directory")
     parser.add_argument("--include-day-type", action="store_true", help="Include day_type one-hot in modeling")
     args = parser.parse_args()
