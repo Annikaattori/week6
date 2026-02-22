@@ -158,15 +158,15 @@ raw, clean, fa_df, cluster_df = ensure_data(dataset_path, include_day_type)
 if page == "Data & EDA":
     st.header("Data & EDA")
     st.subheader("Dataset preview")
-    st.dataframe(raw.head(10), use_container_width=True)
+    st.dataframe(raw.head(10), width="stretch")
 
     c1, c2 = st.columns(2)
     with c1:
         st.subheader("Summary statistics")
-        st.dataframe(raw.describe(include="all").transpose(), use_container_width=True)
+        st.dataframe(raw.describe(include="all").transpose(), width="stretch")
     with c2:
         st.subheader("Missing values")
-        st.dataframe(raw.isna().sum().rename("missing_count"))
+        st.dataframe(raw.isna().sum().rename("missing_count"), width="stretch")
 
     st.subheader("Correlation matrix")
     num = clean.select_dtypes(include=[np.number])
@@ -184,14 +184,19 @@ if page == "Data & EDA":
 elif page == "Factor Analysis":
     st.header("Factor Analysis")
     st.write(
-        "**Problem definition:** Tavoitteena on tiivistää etätyön kuormitus-, palautumis- ja suoriutumismittarit "
-        "latentteihin faktoreihin, jotka helpottavat tulkintaa ja visualisointia."
+        "**Problem definition:** The goal is to summarize remote-work workload, recovery, and performance measures "
+        "into latent factors that aid interpretation and visualization."
     )
 
     max_factors = min(6, fa_df.shape[1])
     n_factors = st.slider("Number of factors", min_value=1, max_value=max_factors, value=min(3, max_factors))
 
     eigenvalues, scores, loadings, communalities = fit_factor_analysis(fa_df, n_factors)
+    avg_communality = communalities["communality"].mean() if not communalities.empty else np.nan
+    st.metric("Average communality (proxy for variance explained)", f"{avg_communality:.3f}")
+    st.write("Note: sklearn's `FactorAnalysis` does not provide per-factor variance-explained like PCA.\n"
+             "Average communality (mean of variable communalities) is shown as a proxy for the fraction of each variable's variance explained by the common factors.\n"
+             "For a more explicit variance decomposition you can use the `factor_analyzer` package which reports explained variance per factor.")
     kaiser_k = int(max(1, np.sum(eigenvalues > 1)))
 
     c1, c2 = st.columns(2)
@@ -209,18 +214,18 @@ elif page == "Factor Analysis":
     st.pyplot(fig)
 
     st.subheader("Factor loadings")
-    st.dataframe(loadings, use_container_width=True)
+    st.dataframe(loadings, width="stretch")
 
     fig2, ax2 = plt.subplots(figsize=(8, 4))
     sns.heatmap(loadings, cmap="coolwarm", center=0, annot=True, ax=ax2)
     st.pyplot(fig2)
 
     st.subheader("Communalities")
-    st.dataframe(communalities)
+    st.dataframe(communalities, width="stretch")
 
     scores_df = pd.DataFrame(scores, columns=[f"Factor{i+1}" for i in range(scores.shape[1])])
     st.subheader("Factor scores")
-    st.dataframe(scores_df.head(20), use_container_width=True)
+    st.dataframe(scores_df.head(20), width="stretch")
 
     if scores.shape[1] >= 2:
         fig3, ax3 = plt.subplots(figsize=(7, 5))
@@ -231,14 +236,14 @@ elif page == "Factor Analysis":
         st.pyplot(fig3)
 
     st.markdown(
-        "**Interpretation tip:** Nimeä faktorisi suurimpien latausten perusteella (esim. Workload, Recovery, Performance/Burnout)."
+        "**Interpretation tip:** Name your factors according to the largest loadings (e.g., Workload, Recovery, Performance/Burnout)."
     )
 
 elif page == "Clustering":
     st.header("Clustering")
     st.write(
-        "**Problem definition:** Tavoitteena on ryhmitellä työntekijät luonnollisiin segmentteihin kuormituksen, "
-        "palautumisen ja suoriutumisen perusteella."
+        "**Problem definition:** The goal is to group employees into natural segments based on workload, "
+        "recovery, and performance."
     )
 
     X, ks, inertias, silhouettes = compute_kmeans_sweeps(cluster_df)
@@ -278,8 +283,35 @@ elif page == "Clustering":
     else:
         eps = st.slider("eps", min_value=0.1, max_value=3.0, value=1.2, step=0.1)
         min_samples = st.slider("min_samples", min_value=3, max_value=20, value=6)
-        model = DBSCAN(eps=eps, min_samples=min_samples)
-        labels = model.fit_predict(X)
+        auto_tune = st.checkbox("Auto-tune DBSCAN (grid search)", value=False)
+        if auto_tune:
+            eps_candidates = np.round(np.linspace(0.3, 3.0, 14), 2)
+            min_samples_candidates = [3, 4, 5, 6, 8]
+            best = {"silhouette": -np.inf, "eps": None, "min_samples": None, "labels": None}
+            for e in eps_candidates:
+                for m in min_samples_candidates:
+                    model_try = DBSCAN(eps=float(e), min_samples=int(m))
+                    labels_try = model_try.fit_predict(X)
+                    uniq = np.unique(labels_try)
+                    # require at least 2 clusters (noise allowed)
+                    if len(uniq) < 2 or (len(uniq) == 2 and -1 in uniq and np.sum(labels_try != -1) < 2):
+                        continue
+                    try:
+                        s = silhouette_score(X, labels_try)
+                    except Exception:
+                        continue
+                    if s > best["silhouette"]:
+                        best.update({"silhouette": s, "eps": e, "min_samples": m, "labels": labels_try})
+            if best["eps"] is not None:
+                st.write(f"Best DBSCAN (by silhouette): eps={best['eps']}, min_samples={best['min_samples']}, silhouette={best['silhouette']:.3f}")
+                labels = best["labels"]
+            else:
+                st.write("Auto-tune found no suitable DBSCAN clustering (too few clusters or all noise). Try expanding parameter ranges.")
+                model = DBSCAN(eps=eps, min_samples=min_samples)
+                labels = model.fit_predict(X)
+        else:
+            model = DBSCAN(eps=eps, min_samples=min_samples)
+            labels = model.fit_predict(X)
 
     label_map = {
         f"kmeans_k={best_k}": KMeans(n_clusters=best_k, n_init=20, random_state=42).fit_predict(X),
@@ -288,7 +320,7 @@ elif page == "Clustering":
     }
     metrics = metric_table(X, label_map)
     st.subheader("Evaluation metrics")
-    st.dataframe(metrics, use_container_width=True)
+    st.dataframe(metrics, width="stretch")
 
     centered = pd.DataFrame(X, columns=cluster_df.columns)
     centered["cluster"] = labels
@@ -308,25 +340,155 @@ elif page == "Clustering":
         ax_sc.set_title("Clusters projected in FA space")
         st.pyplot(fig_sc)
 
-    st.markdown("Lyhyt tulkinta: jos klusterit erottuvat selvästi kuvassa, segmentit ovat todennäköisesti mielekkäitä.")
+    st.markdown("Brief interpretation: if clusters separate clearly in the plot, the segments are likely meaningful.")
 
 else:
     st.header("Documentation / Learning")
+    # Top summary and visual metric cards
+    st.subheader("Analysis summary")
+    m1, m2, m3 = st.columns(3)
+    with m1:
+        st.markdown("### Silhouette")
+        st.write("Range: -1 … 1")
+        st.write("Higher → better separation between clusters")
+    with m2:
+        st.markdown("### Calinski–Harabasz (CH)")
+        st.write("Higher → more compact and well-separated clusters")
+    with m3:
+        st.markdown("### Davies–Bouldin (DB)")
+        st.write("Lower → better (less intra-cluster scatter relative to inter-cluster distance)")
+
+    st.markdown("---")
+    st.subheader("Practical checks")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("- Visual separability: FA scatter, dendrogram, heatmaps")
+        st.markdown("- Domain sense: do profiles match expected patterns (workload → burnout)")
+    with col2:
+        st.markdown("- Robustness: are patterns similar across methods (k-means, hierarchical, DBSCAN)")
+        st.markdown("- Actionability: can clusters inform interventions or further analysis?")
+
+    st.markdown("---")
+    st.subheader("Quick checklist — files to inspect")
     st.markdown(
-        """
-### Mikä on ohjaamaton oppiminen?
-Ohjaamattomassa oppimisessa dataa analysoidaan ilman valmiita luokkatunnisteita. Tavoitteena on löytää rakenteita, ryhmiä ja latentteja tekijöitä.
-
-### Mitä faktorit ja klusterit ovat?
-- **Faktorit (FA)**: latentteja ulottuvuuksia, jotka tiivistävät useita korreloivia muuttujia.
-- **Klusterit**: havaintojen ryhmiä, joissa saman ryhmän havainnot muistuttavat toisiaan enemmän kuin muita ryhmiä.
-
-### Miksi standardointi on tärkeää?
-Ilman standardointia suuren mittakaavan muuttujat dominoivat etäisyyksiä ja varianssia. Standardointi tekee muuttujista vertailukelpoisia.
-
-### Tärkeimmät löydökset (täydennä analyysin jälkeen)
-1. Kaiser + scree antavat perustellun faktorimäärän.
-2. Klusterien laatu voidaan arvioida silhouette-, CH- ja DB-indekseillä.
-3. FA-avaruus auttaa tulkitsemaan, erottuvatko klusterit kuormitus- tai palautumissuunnissa.
-        """
+        "- FA: `outputs/fa_scree_plot.png`, `outputs/fa_loadings.csv`, `outputs/fa_communalities.csv`\n"
+        "- Clustering: `outputs/clustering_elbow.png`, `outputs/clustering_silhouette_k.png`, `outputs/clustering_metrics.csv`, `outputs/cluster_profiles_standardized.csv`, `outputs/cluster_profile_heatmap.png`\n"
+        "- Report: `outputs/report.md`"
     )
+
+    with st.expander("Detailed analysis and results (expand)"):
+        st.markdown(
+            """
+The same dataset was used in my previous week’s supervised learning project, so I already had some familiarity with the variables and their relationships. This helped in interpreting the FA factors and cluster profiles.
+ 
+1) Factor Analysis: what latent dimensions did I find?
+
+Variables used in FA:
+work_hours, screen_time_hours, meetings_count, breaks_taken, sleep_hours, task_completion_rate, burnout_score
+(Note: breaks_taken and sleep_hours are weakly explained by the factor model in this dataset.)
+
+Factor 1 – Workload & burnout vs. performance
+
+Strong positive loadings: work_hours (~0.73), screen_time_hours (~0.73), burnout_score (~0.74)
+
+Strong negative loading: task_completion_rate (~-0.74)
+
+Interpretation:
+This factor captures a core “overall strain/workload” dimension where longer working time and more screen time are associated with higher burnout and lower task completion.
+Higher Factor 1 scores imply higher workload + higher burnout + weaker output.
+
+Factor 2 – Disengagement/inefficiency (burnout not purely driven by high workload)
+
+Positive loading: burnout_score (~+0.65)
+
+Negative loadings: work_hours (~-0.65), screen_time_hours (~-0.65), task_completion_rate (~-0.64)
+
+meetings_count is mildly negative (~-0.32)
+
+Interpretation:
+This factor separates cases where burnout and reduced performance can appear even when measured workload (hours/screen time) is not high.
+Conceptually, it resembles a “disengagement/inefficiency” or “burnout without obvious workload” axis.
+
+Note: factor signs are arbitrary (a factor can be multiplied by -1). Interpretation relies on which variables move together vs. in opposite directions.
+
+Factor 3 – Meeting intensity / daily rhythm (weaker but meeting-related)
+
+Most visible loading: meetings_count (~0.25) and it correlates most strongly with Factor 3 scores (~0.56)
+
+breaks_taken and sleep_hours load only weakly
+
+Interpretation:
+Factor 3 primarily reflects meeting intensity (and only very weakly “daily rhythm” aspects). It is noticeably weaker than Factors 1 and 2.
+
+Communalities: which variables are well explained by FA?
+
+Very well explained (communality ~0.96):
+work_hours, screen_time_hours, task_completion_rate, burnout_score
+
+Poorly explained:
+breaks_taken (~0.01), sleep_hours (~0.007)
+
+meetings_count is moderate (~0.33)
+
+Conclusion:
+FA identifies a strong latent structure mainly on the axis (work/screen/burnout/completion). In contrast, sleep and breaks do not align strongly with the same latent structure in this dataset (or the measurement noise dominates), so they don’t form a strong factor here.
+
+2) Clustering: what groups did I find and how good are they?
+
+Selected number of clusters: k = 2 (best_k = 2)
+
+Model comparison (2–3 metrics)
+
+From my metrics:
+
+- k-means (k=2): silhouette ≈ 0.22, CH ≈ 552, DB ≈ 1.75
+
+- hierarchical (k=2): silhouette ≈ 0.16, CH ≈ 351, DB ≈ 2.12
+
+Interpretation:
+k-means is clearly better across these metrics. A silhouette around 0.22 is low-to-moderate, meaning the clusters exist but are not perfectly separated (common in behavioral/people data).
+
+3) Cluster profiles: what do the clusters represent in practice?
+
+k-means produced two segments (N=1800):
+
+Cluster 0 (n=832, ~46%) — “Higher workload + higher burnout + lower performance”
+- work_hours: 8.65
+- screen_time_hours: 11.45
+- meetings_count: 3.06
+- task_completion_rate: 69.54
+- burnout_score: 48.34
+
+Cluster 1 (n=968, ~54%) — “Lower workload + lower burnout + better performance”
+- work_hours: 4.68
+- screen_time_hours: 7.40
+- meetings_count: 0.98
+- task_completion_rate: 74.69
+- burnout_score: 40.29
+
+Which variables separate clusters the most?
+
+From standardized profiles, the biggest differences are:
+- work_hours (≈ +0.93 vs -0.80)
+- screen_time_hours (≈ +0.90 vs -0.78)
+- meetings_count (≈ +0.66 vs -0.57)
+
+Conclusion: clustering is driven primarily by the workload/screen/meetings bundle; burnout and completion differences follow that structure.
+
+4) Joint interpretation: how do factors and clusters connect?
+
+Overall pattern:
+
+Cluster 0 corresponds to high Factor 1 (“workload & burnout vs completion”): heavy workload + higher burnout + lower completion.
+
+Cluster 1 corresponds to low Factor 1: lighter workload + lower burnout + higher completion.
+
+So: clusters are mainly separated along Factor 1, suggesting the dominant latent dimension in this dataset is the workload–burnout–performance axis.
+
+5) Practical meaning (plain-language takeaway)
+
+The dataset shows a strong and consistent structure: higher workload (hours + screen time + meetings) is associated with higher burnout and reduced task completion.
+
+FA also suggests a secondary phenomenon: burnout/low performance is not always purely a direct function of measured workload (Factor 2), but clustering mostly captures the main “mass effect” (Factor 1).
+            """
+        )
